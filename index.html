@@ -80,14 +80,14 @@ const GAS_URL='https://script.google.com/macros/s/AKfycbwfWqmkUPUi4Q2bwwSi01lW4x
 const SHOPS=[{code:'T',name:'ティアラ'},{code:'C',name:'キュート'}];
 
 const COURSES_BY_SHOP={
-  T:[{l:'60min',p:17000},{l:'70min',p:19000},{l:'80min',p:21000},{l:'90min',p:23000},{l:'120min',p:33000},{l:'150min',p:41000},{l:'180min',p:49000}],
-  C:[{l:'60min',p:16000},{l:'80min',p:21000},{l:'100min',p:26000},{l:'120min',p:31000},{l:'140min',p:36000},{l:'160min',p:41000},{l:'180min',p:46000}],
+  T:[{l:'60',p:17000},{l:'70',p:19000},{l:'80',p:21000},{l:'90',p:23000},{l:'120',p:33000},{l:'150',p:41000},{l:'180',p:49000}],
+  C:[{l:'60',p:16000},{l:'80',p:21000},{l:'100',p:26000},{l:'120',p:31000},{l:'140',p:36000},{l:'160',p:41000},{l:'180',p:46000}],
 };
 
 const CASTS=['ユリカ','ホノカ','レン','サナ','カレン','スモモ','リンカ','トモ','ユウキ','マシロ','チカ','ナナコ','ヒナタ','ナミ','メグ','カスミ'];
 const HOTELS=['シティ','アイネイン','モーテル','HP','ラペ','ハイハイ','その他'];
-const STATUS=['確定','対応中','完了','キャンセル'];
-const SB={確定:'bp',対応中:'ba',完了:'bg',キャンセル:'br'};
+const STATUS=['0','-1000','-2000','-3000','-4000'];
+const SB={'-1000':'bp','-2000':'ba','-3000':'bg','-4000':'br'};
 
 let _id=9000;
 function td(){return new Date().toISOString().slice(0,10)}
@@ -96,7 +96,7 @@ function fp(n){const v=Number(n);return isNaN(v)||v===0?'－':v.toLocaleString('
 
 function makeEmpty(shop='T'){
   const courses=COURSES_BY_SHOP[shop]||COURSES_BY_SHOP.T;
-  return {date:td(),time:'',shop,cast:'',customer:'',phone:'',hotel:'シティ',room:'',course:courses[0].l,price:String(courses[0].p),status:'確定',memo:''};
+  return {date:td(),time:'',shop,cast:'',customer:'',phone:'',hotel:'シティ',room:'',course:courses[0].l,price:String(courses[0].p),status:'0',shimei:'フリー',place:'',memo:''};
 }
 
 function App(){
@@ -123,7 +123,7 @@ function App(){
       try{d=JSON.parse(text);}
       catch(e){throw new Error('GASの応答がJSONではありません。\n'+text.slice(0,300));}
       if(d.success){
-        setRows(d.data.map(x=>({...x,price:Number(x.price)||0})));
+        setRows(d.data.map(x=>({...x,price:Number(x.price)||0,phone:normalizePhone(x.phone),shopCode:x.shopCode||x.shop||'',shimei:x.shimei||'フリー',place:x.place||''})));
         setStatus('ok');
         msg(`✓ ${d.data.length}件を読み込みました`);
       }else{
@@ -145,7 +145,7 @@ function App(){
   }
 
   const filtered=useMemo(()=>rows.filter(r=>{
-    if(shopFilter!=='all'&&r.shopCode!==shopFilter)return false;
+    if(shopFilter!=='all'&&(r.shopCode||r.shop)!==shopFilter)return false;
     if(todayOnly&&r.date!==td())return false;
     if(search){const q=search.toLowerCase();return[r.customer,r.cast,r.phone,r.hotel,r.room].some(v=>(v||'').toLowerCase().includes(q));}
     return true;
@@ -153,8 +153,8 @@ function App(){
 
   const todayRows=rows.filter(r=>r.date===td());
   const todaySales=todayRows.filter(r=>r.status==='完了').reduce((s,r)=>s+Number(r.price),0);
-  const cntT=rows.filter(r=>r.date===td()&&r.shopCode==='T').length;
-  const cntC=rows.filter(r=>r.date===td()&&r.shopCode==='C').length;
+  const cntT=rows.filter(r=>r.date===td()&&(r.shopCode||r.shop)==='T').length;
+  const cntC=rows.filter(r=>r.date===td()&&(r.shopCode||r.shop)==='C').length;
 
   function openNew(shop='T'){setForm(makeEmpty(shop));setEditId(null);setShowForm(true)}
   function openEdit(r){setForm({...r,price:String(r.price),shop:r.shopCode||'T'});setEditId(r.id);setShowForm(true)}
@@ -175,22 +175,59 @@ function App(){
     if(!form.date||!form.time||!form.customer||!form.phone){msg('⚠ 日付・時間・お客様名・電話番号は必須です');return;}
     setSyncing(true);
     const shopName=SHOPS.find(s=>s.code===form.shop)?.name||'';
+ 
     if(editId){
-      const upd={...form,id:editId,price:Number(form.price),shopCode:form.shop,shopName};
+    const fixedPhone = normalizePhone(form.phone);
+const fixedTime  = formatTime(form.time);
+
+const upd = {
+  ...form,
+  time: fixedTime,
+  phone: fixedPhone,
+  id: editId,
+  price: Number(form.price),
+  shopCode: form.shop,
+  shimei: form.shimei || 'フリー',
+  place: form.place || '',
+  shopName
+}; 
       setRows(rs=>rs.map(r=>r.id===editId?upd:r));
       const res=await post({action:'update',data:upd});
       msg(res?.success?'✓ 更新しました':'⚠ エラー: '+(res?.error||''));
     }else{
-      const nid=String(_id++);
-      const item={...form,id:nid,price:Number(form.price),shopCode:form.shop,shopName};
-      setRows(rs=>[item,...rs]);
-      const res=await post({action:'add',data:item});
-      if(res?.success){setRows(rs=>rs.map(x=>x.id===nid?{...x,id:res.id}:x));msg('✓ シートに保存しました');}
-      else msg('⚠ エラー: '+(res?.error||''));
-    }
-    setSyncing(false);setShowForm(false);
+
+  const nid = String(_id++);
+
+  if(!form.status){
+    form.status = '0';
   }
 
+  const item = {
+    ...form,
+    time: fixedTime,
+    phone: fixedPhone,
+    id: nid,
+    price: Number(form.price),
+    shopCode: form.shop,
+    shimei: form.shimei || 'フリー',
+    place: form.place || '',
+    shopName
+  };
+
+  setRows(rs => [item, ...rs]);
+
+  const res = await post({
+    action:'add',
+    data:item
+  });
+
+  if(res?.success){
+    setRows(rs=>rs.map(x=>x.id===nid?{...x,id:res.id}:x));
+    msg('✓ シートに保存しました');
+  }else{
+    msg('⚠ エラー: '+(res?.error||''));
+  }
+}
   async function del(id){
     if(!confirm('この予約を削除しますか？'))return;
     setRows(rs=>rs.filter(r=>r.id!==id));
@@ -205,10 +242,30 @@ function App(){
     await post({action:'update',data:upd});
     msg(`→ ${s}`);
   }
+  function formatTime(v){
+    if(!v) return '';
+    const s = String(v);
+    if(/^\d{1,2}:\d{2}/.test(s)) return s.slice(0,5).padStart(5,'0');
+    const m = s.match(/(\d{1,2}):(\d{2})/);
+    if(m) return m[1].padStart(2,'0') + ':' + m[2];
+    const d = new Date(v);
+    if(!isNaN(d.getTime())){
+      return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+    }
+    return '';
+  }
+
+  function normalizePhone(v){
+    let phone = String(v || '').replace(/[^0-9]/g,'');
+    if(phone && phone.charAt(0) !== '0' && phone.length >= 10 && phone.length <= 11){
+      phone = '0' + phone;
+    }
+    return phone;
+  }
 
   function exportCSV(){
-    const h='日付,時間,店舗,キャスト,お客様名,電話番号,ホテル,部屋番号,コース,料金,ステータス,メモ';
-    const r=filtered.map(x=>[x.date,x.time,x.shopCode||'',x.cast,x.customer,x.phone,x.hotel,x.room,x.course,x.price,x.status,(x.memo||'').replace(/,/g,'、')].join(','));
+    const h='日付,時間,店舗,指名状況,場所,キャスト,お客様名,電話番号,ホテル,部屋番号,コース,料金,割引,メモ';
+    const r=filtered.map(x=>[x.date,formatTime(x.time),x.shopCode||x.shop||'',x.shimei||'',x.place||'',x.cast,x.customer,normalizePhone(x.phone),x.hotel,x.room,x.course,x.price,x.status,(x.memo||'').replace(/,/g,'、')].join(','));
     const blob=new Blob(['\uFEFF'+[h,...r].join('\n')],{type:'text/csv;charset=utf-8'});
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='予約一覧_'+td()+'.csv';a.click();
     msg('✓ CSVをダウンロードしました');
@@ -248,10 +305,6 @@ function App(){
         <div className="stat">
           <div className="stat-label">キュート</div>
           <div className="stat-val" style={{color:'#0A7AC8'}}>{cntC}<span style={{fontSize:13,fontWeight:400}}> 件</span></div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">本日売上</div>
-          <div className="stat-val" style={{color:'#27500A',fontSize:16}}>{todaySales.toLocaleString()}<span style={{fontSize:11,fontWeight:400}}>円</span></div>
         </div>
       </div>
 
@@ -312,15 +365,15 @@ function App(){
             </div>
           </div>
         ):filtered.map(r=>{
-          const sc=r.shopCode||'';
+          const sc=r.shopCode||r.shop||'';
           return(
             <div key={r.id} className={`res-card shop-${sc}`}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
                 <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                   <span className={`badge badge-${sc}`}>{sc==='T'?'ティアラ':sc==='C'?'キュート':sc}</span>
                   <span style={{fontWeight:600}}>{toJp(r.date)}</span>
-                  <span style={{color:'#534AB7',fontWeight:500}}>{r.time}</span>
-                  <span className={`badge ${SB[r.status]||'bp'}`}>{r.status||'確定'}</span>
+                  <span style={{color:'#534AB7',fontWeight:500}}>{formatTime(r.time)}</span>
+                  <span className={`badge ${SB[r.status]||'bp'}`}>{r.status||'-1000'}</span>
                 </div>
                 <div style={{display:'flex',gap:4}}>
                   <button style={{padding:'4px 8px',fontSize:12}} onClick={()=>openEdit(r)}><i className="ti ti-edit"></i></button>
@@ -328,8 +381,10 @@ function App(){
                 </div>
               </div>
               <div className="res-body">
-                <div><i className="ti ti-user" style={{fontSize:13,marginRight:5,color:'#534AB7'}}></i><strong>{r.customer||'－'}</strong>　<i className="ti ti-phone" style={{fontSize:12,marginRight:4,color:'#888'}}></i>{r.phone||'－'}</div>
+                <div><i className="ti ti-user" style={{fontSize:13,marginRight:5,color:'#534AB7'}}></i><strong>{r.customer||'－'}</strong>　<i className="ti ti-phone" style={{fontSize:12,marginRight:4,color:'#888'}}></i>{normalizePhone(r.phone)||'－'}</div>
                 <div><i className="ti ti-heart" style={{fontSize:13,marginRight:5,color:'#D4537E'}}></i>キャスト：<strong>{r.cast||'－'}</strong></div>
+                <div><i className="ti ti-star" style={{fontSize:13,marginRight:5,color:'#888'}}></i>指名状況：<strong>{r.shimei||'フリー'}</strong></div>
+                <div><i className="ti ti-map-pin" style={{fontSize:13,marginRight:5,color:'#888'}}></i>場所：<strong>{r.place||'－'}</strong></div>
                 <div><i className="ti ti-building" style={{fontSize:13,marginRight:5,color:'#888'}}></i>{r.hotel||'－'}　<strong>{r.room?r.room+'号室':'－'}</strong></div>
                 <div style={{display:'flex',justifyContent:'space-between',marginTop:4}}>
                   <span><i className="ti ti-clock" style={{fontSize:12,marginRight:4,color:'#888'}}></i>{r.course||'－'}</span>
@@ -372,13 +427,34 @@ function App(){
               <div><label>日付 *</label><input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/></div>
               <div><label>時間 *</label><input type="time" value={form.time} onChange={e=>setForm({...form,time:e.target.value})}/></div>
               <div><label>お客様名 *</label><input placeholder="山田 太郎" value={form.customer} onChange={e=>setForm({...form,customer:e.target.value})}/></div>
-              <div><label>電話番号 *</label><input type="tel" placeholder="090-0000-0000" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/></div>
+              <div><label>電話番号 *</label><input
+  type="tel"
+  placeholder="090-0000-0000"
+  value={form.phone}
+  onChange={e=>setForm({...form,phone:normalizePhone(e.target.value)})}
+/></div>
               <div>
                 <label>キャスト</label>
                 <input list="cast-list" placeholder="キャスト名" value={form.cast} onChange={e=>setForm({...form,cast:e.target.value})}/>
                 <datalist id="cast-list">{CASTS.map(c=><option key={c} value={c}/>)}</datalist>
               </div>
-              <div><label>ステータス</label><select value={form.status} onChange={e=>setForm({...form,status:e.target.value})}>{STATUS.map(s=><option key={s}>{s}</option>)}</select></div>
+              <div><label>指名状況</label><select value={form.shimei||'フリー'} onChange={e=>setForm({...form,shimei:e.target.value})}>
+                <option value="フリー">フリー</option>
+                <option value="写指">写指</option>
+                <option value="本指">本指</option>
+                <option value="特割">特割</option>
+              </select></div>
+              <div><label>場所</label><input placeholder="場所を入力" value={form.place||''} onChange={e=>setForm({...form,place:e.target.value})}/></div>
+              <div><label>割引</label><select
+  value={form.status}
+  onChange={e=>setForm({...form,status:e.target.value})}
+>
+  <option value="0">割引なし</option>
+  <option value="-1000">-1000円</option>
+  <option value="-2000">-2000円</option>
+  <option value="-3000">-3000円</option>
+  <option value="-4000">-4000円</option>
+</select></div>
               <div><label>ホテル</label><select value={form.hotel} onChange={e=>setForm({...form,hotel:e.target.value})}>{HOTELS.map(h=><option key={h}>{h}</option>)}</select></div>
               <div><label>部屋番号</label><input placeholder="305" value={form.room} onChange={e=>setForm({...form,room:e.target.value})}/></div>
               <div><label>コース</label>
